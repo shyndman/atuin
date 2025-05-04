@@ -8,6 +8,7 @@ use axum::{
     response::{IntoResponse, Response},
     routing::{delete, get, patch, post},
 };
+use tracing::debug;
 use eyre::Result;
 use tower::ServiceBuilder;
 use tower_http::trace::TraceLayer;
@@ -33,6 +34,7 @@ where
         req: &mut Parts,
         state: &AppState<DB>,
     ) -> Result<Self, Self::Rejection> {
+        debug!("Extracting user authentication from request parts");
         let auth_header = req
             .headers
             .get(http::header::AUTHORIZATION)
@@ -40,14 +42,17 @@ where
                 ErrorResponse::reply("missing authorization header")
                     .with_status(http::StatusCode::BAD_REQUEST)
             })?;
+        debug!("Authorization header found");
         let auth_header = auth_header.to_str().map_err(|_| {
             ErrorResponse::reply("invalid authorization header encoding")
                 .with_status(http::StatusCode::BAD_REQUEST)
         })?;
+        debug!("Authorization header decoded");
         let (typ, token) = auth_header.split_once(' ').ok_or_else(|| {
             ErrorResponse::reply("invalid authorization header encoding")
                 .with_status(http::StatusCode::BAD_REQUEST)
         })?;
+        debug!("Authorization header split into type '{}' and token", typ);
 
         if typ != "Token" {
             return Err(
@@ -56,6 +61,7 @@ where
             );
         }
 
+        debug!("Querying database for session user with token");
         let user = state
             .database
             .get_session_user(token)
@@ -69,23 +75,27 @@ where
                         .with_status(http::StatusCode::INTERNAL_SERVER_ERROR)
                 }
             })?;
+        debug!("Session user found: {:?}", user.username);
 
         Ok(UserAuth(user))
     }
 }
 
 async fn teapot() -> impl IntoResponse {
+    debug!("Handling fallback route (teapot)");
     // This used to return 418: 🫖
     // Much as it was fun, it wasn't as useful or informative as it should be
     (http::StatusCode::NOT_FOUND, "404 not found")
 }
 
 async fn clacks_overhead(request: Request, next: Next) -> Response {
+    debug!("Running clacks_overhead middleware");
     let mut response = next.run(request).await;
 
     let gnu_terry_value = "GNU Terry Pratchett, Kris Nova";
     let gnu_terry_header = "X-Clacks-Overhead";
 
+    debug!("Adding X-Clacks-Overhead header");
     response
         .headers_mut()
         .insert(gnu_terry_header, gnu_terry_value.parse().unwrap());
@@ -94,7 +104,9 @@ async fn clacks_overhead(request: Request, next: Next) -> Response {
 
 /// Ensure that we only try and sync with clients on the same major version
 async fn semver(request: Request, next: Next) -> Response {
+    debug!("Running semver middleware");
     let mut response = next.run(request).await;
+    debug!("Adding Atuin version header: {}", ATUIN_CARGO_VERSION);
     response
         .headers_mut()
         .insert(ATUIN_HEADER_VERSION, ATUIN_CARGO_VERSION.parse().unwrap());
@@ -109,6 +121,7 @@ pub struct AppState<DB: Database> {
 }
 
 pub fn router<DB: Database>(database: DB, settings: Settings<DB::Settings>) -> Router {
+    debug!("Building main application router");
     let routes = Router::new()
         .route("/", get(handlers::index))
         .route("/healthz", get(handlers::health::health_check))
@@ -136,20 +149,30 @@ pub fn router<DB: Database>(database: DB, settings: Settings<DB::Settings>) -> R
         .route("/api/v0/record", get(handlers::v0::record::index))
         .route("/api/v0/record/next", get(handlers::v0::record::next))
         .route("/api/v0/store", delete(handlers::v0::store::delete));
+    debug!("Defined application routes");
 
     let path = settings.path.as_str();
-    if path.is_empty() {
+    let router_with_path = if path.is_empty() {
+        debug!("No path prefix configured");
         routes
     } else {
+        debug!("Nesting routes under path prefix: {}", path);
         Router::new().nest(path, routes)
-    }
-    .fallback(teapot)
-    .with_state(AppState { database, settings })
-    .layer(
+    };
+
+    debug!("Adding fallback handler and application state");
+    let router_with_state = router_with_path
+        .fallback(teapot)
+        .with_state(AppState { database, settings });
+
+    debug!("Applying middleware layers");
+    let final_router = router_with_state.layer(
         ServiceBuilder::new()
             .layer(axum::middleware::from_fn(clacks_overhead))
             .layer(TraceLayer::new_for_http())
             .layer(axum::middleware::from_fn(metrics::track_metrics))
             .layer(axum::middleware::from_fn(semver)),
-    )
+    );
+    debug!("Router build complete");
+    final_router
 }

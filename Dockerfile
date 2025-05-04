@@ -14,7 +14,7 @@ COPY --from=planner /app/recipe.json recipe.json
 RUN cargo chef cook --release --recipe-path recipe.json
 
 COPY . .
-RUN cargo build --release --bin atuin
+RUN cargo build --bin atuin
 
 FROM debian:bookworm-20250407-slim AS runtime
 
@@ -23,7 +23,7 @@ RUN useradd -c 'atuin user' atuin && mkdir /config && chown atuin:atuin /config
 RUN apt update && apt install ca-certificates -y && rm -rf /var/lib/apt/lists/*
 WORKDIR app
 
-USER atuin
+USER root
 
 ENV TZ=Etc/UTC
 ENV RUST_LOG=atuin::api=info

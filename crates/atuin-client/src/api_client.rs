@@ -41,19 +41,23 @@ pub async fn register(
     email: &str,
     password: &str,
 ) -> Result<RegisterResponse> {
+    debug!("Attempting to register user '{}' with address '{}'", username, address);
     let mut map = HashMap::new();
     map.insert("username", username);
     map.insert("email", email);
     map.insert("password", password);
 
     let url = format!("{address}/user/{username}");
+    debug!("Checking if username exists at {}", url);
     let resp = reqwest::get(url).await?;
 
+    debug!("Username check response status: {}", resp.status());
     if resp.status().is_success() {
         bail!("username already in use");
     }
 
     let url = format!("{address}/register");
+    debug!("Registering user at {}", url);
     let client = reqwest::Client::new();
     let resp = client
         .post(url)
@@ -62,6 +66,7 @@ pub async fn register(
         .json(&map)
         .send()
         .await?;
+    debug!("Registration response status: {}", resp.status());
     let resp = handle_resp_error(resp).await?;
 
     if !ensure_version(&resp)? {
@@ -69,6 +74,7 @@ pub async fn register(
     }
 
     let session = resp.json::<RegisterResponse>().await?;
+    debug!("User registration successful");
     Ok(session)
 }
 

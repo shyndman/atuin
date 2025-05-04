@@ -1,6 +1,7 @@
 use clap::Parser;
 use eyre::{Result, bail};
 use tokio::{fs::File, io::AsyncWriteExt};
+use tracing::debug;
 
 use atuin_client::{api_client, settings::Settings};
 
@@ -28,11 +29,14 @@ pub async fn run(
     email: Option<String>,
     password: Option<String>,
 ) -> Result<()> {
+    debug!("Starting registration process");
     use super::login::or_user_input;
     println!("Registering for an Atuin Sync account");
 
     let username = or_user_input(username, "username");
+    debug!("Username: {}", username);
     let email = or_user_input(email, "email");
+    debug!("Email: {}", email);
 
     let password = password
         .clone()
@@ -42,14 +46,19 @@ pub async fn run(
         bail!("please provide a password");
     }
 
+    debug!("Calling api_client::register");
     let session =
         api_client::register(settings.sync_address.as_str(), &username, &email, &password).await?;
+    debug!("Registration successful");
 
     let path = settings.session_path.as_str();
+    debug!("Saving session to {}", path);
     let mut file = File::create(path).await?;
     file.write_all(session.session.as_bytes()).await?;
 
+    debug!("Loading encryption key");
     let _key = atuin_client::encryption::load_key(settings)?;
+    debug!("Encryption key loaded");
 
     println!(
         "Registration successful! Please make a note of your key (run 'atuin key') and keep it safe."
@@ -58,5 +67,6 @@ pub async fn run(
         "You will need it to log in on other devices, and we cannot help recover it if you lose it."
     );
 
+    debug!("Registration process completed successfully");
     Ok(())
 }

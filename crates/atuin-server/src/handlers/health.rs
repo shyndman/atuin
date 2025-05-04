@@ -1,4 +1,5 @@
 use axum::{Json, http, response::IntoResponse};
+use tracing::debug;
 
 use serde::Serialize;
 
@@ -8,6 +9,7 @@ pub struct HealthResponse {
 }
 
 pub async fn health_check() -> impl IntoResponse {
+    debug!("Handling health check request");
     (
         http::StatusCode::OK,
         Json(HealthResponse { status: "healthy" }),

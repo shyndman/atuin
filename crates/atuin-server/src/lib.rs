@@ -6,6 +6,7 @@ use std::net::SocketAddr;
 use atuin_server_database::Database;
 use axum::{Router, serve};
 use axum_server::Handle;
+use tracing::debug;
 use axum_server::tls_rustls::RustlsConfig;
 use eyre::{Context, Result, eyre};
 
@@ -34,6 +35,7 @@ async fn shutdown_signal() {
         _ = interrupt.recv() => {},
     };
     eprintln!("Shutting down gracefully...");
+    debug!("Shutdown signal received (Unix)");
 }
 
 #[cfg(target_family = "windows")]
@@ -43,12 +45,14 @@ async fn shutdown_signal() {
         .recv()
         .await;
     eprintln!("Shutting down gracefully...");
+    debug!("Shutdown signal received (Windows)");
 }
 
 pub async fn launch<Db: Database>(
     settings: Settings<Db::Settings>,
     addr: SocketAddr,
 ) -> Result<()> {
+    debug!("Launching server on address: {}", addr);
     if settings.tls.enable {
         launch_with_tls::<Db>(settings, addr, shutdown_signal()).await
     } else {
@@ -68,11 +72,15 @@ pub async fn launch_with_tcp_listener<Db: Database>(
     listener: TcpListener,
     shutdown: impl Future<Output = ()> + Send + 'static,
 ) -> Result<()> {
+    debug!("Launching server with TCP listener");
     let r = make_router::<Db>(settings).await?;
+    debug!("Router created");
 
+    debug!("Starting server with graceful shutdown");
     serve(listener, r.into_make_service())
         .with_graceful_shutdown(shutdown)
         .await?;
+    debug!("Server stopped");
 
     Ok(())
 }
@@ -82,6 +90,7 @@ async fn launch_with_tls<Db: Database>(
     addr: SocketAddr,
     shutdown: impl Future<Output = ()>,
 ) -> Result<()> {
+    debug!("Launching server with TLS on address: {}", addr);
     let crypto_provider = rustls::crypto::ring::default_provider().install_default();
     if crypto_provider.is_err() {
         return Err(eyre!("Failed to install default crypto provider"));
@@ -95,19 +104,25 @@ async fn launch_with_tls<Db: Database>(
         return Err(eyre!("Failed to load TLS key and/or certificate"));
     }
     let rustls_config = rustls_config.unwrap();
+    debug!("TLS configuration loaded");
 
     let r = make_router::<Db>(settings).await?;
+    debug!("Router created");
 
     let handle = Handle::new();
+    debug!("Server handle created");
 
     let server = axum_server::bind_rustls(addr, rustls_config)
         .handle(handle.clone())
         .serve(r.into_make_service());
+    debug!("TLS server bound and serving");
 
     tokio::select! {
-        _ = server => {}
+        _ = server => { debug!("TLS server finished"); }
         _ = shutdown => {
+            debug!("TLS server received shutdown signal");
             handle.graceful_shutdown(None);
+            debug!("TLS server graceful shutdown initiated");
         }
     }
 
@@ -117,20 +132,27 @@ async fn launch_with_tls<Db: Database>(
 // The separate listener means it's much easier to ensure metrics are not accidentally exposed to
 // the public.
 pub async fn launch_metrics_server(host: String, port: u16) -> Result<()> {
+    debug!("Creating metrics server on {}", port);
+
     let listener = TcpListener::bind((host, port))
         .await
         .context("failed to bind metrics tcp")?;
+    debug!("Metrics server listener bound");
 
     let recorder_handle = metrics::setup_metrics_recorder();
+    debug!("Metrics recorder setup");
 
     let router = Router::new().route(
         "/metrics",
         axum::routing::get(move || std::future::ready(recorder_handle.render())),
     );
+    debug!("Metrics router created");
 
+    debug!("Starting metrics server with graceful shutdown");
     serve(listener, router.into_make_service())
         .with_graceful_shutdown(shutdown_signal())
         .await?;
+    debug!("Metrics server stopped");
 
     Ok(())
 }
@@ -138,6 +160,7 @@ pub async fn launch_metrics_server(host: String, port: u16) -> Result<()> {
 async fn make_router<Db: Database>(
     settings: Settings<<Db as Database>::Settings>,
 ) -> Result<Router, eyre::Error> {
+    debug!("Creating router");
     let db = Db::new(&settings.db_settings)
         .await
         .wrap_err_with(|| format!("failed to connect to db: {:?}", settings.db_settings))?;

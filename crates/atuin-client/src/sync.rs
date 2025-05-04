@@ -135,20 +135,26 @@ async fn sync_upload(
     debug!("starting sync upload");
 
     let remote_status = client.status().await?;
+    debug!("fetched remote status");
     let remote_deleted: HashSet<String> = HashSet::from_iter(remote_status.deleted.clone());
 
     let initial_remote_count = client.count().await?;
+    debug!("fetched initial remote count: {}", initial_remote_count);
     let mut remote_count = initial_remote_count;
 
     let local_count = db.history_count(true).await?;
+    debug!("fetched local count: {}", local_count);
 
     debug!("remote has {}, we have {}", remote_count, local_count);
 
     // first just try the most recent set
+    debug!("starting upload loop while local_count ({}) > remote_count ({})", local_count, remote_count);
     let mut cursor = OffsetDateTime::now_utc();
 
     while local_count > remote_count {
+        debug!("fetching history before cursor {:?}", cursor);
         let last = db.before(cursor, remote_status.page_size).await?;
+        debug!("fetched {} history items", last.len());
         let mut buffer = Vec::new();
 
         if last.is_empty() {
@@ -170,7 +176,9 @@ async fn sync_upload(
         }
 
         // anything left over outside of the 100 block size
+        debug!("posting {} history items to remote", buffer.len());
         client.post_history(&buffer).await?;
+        debug!("successfully posted history items");
         cursor = buffer.last().unwrap().timestamp;
         remote_count = client.count().await?;
 
@@ -178,6 +186,7 @@ async fn sync_upload(
     }
 
     let deleted = db.deleted().await?;
+    debug!("processing {} deleted items", deleted.len());
 
     for i in deleted {
         if remote_deleted.contains(&i.id.to_string()) {
@@ -185,8 +194,10 @@ async fn sync_upload(
         }
 
         info!("deleting {} on remote", i.id);
+        debug!("deleting history with id {} on remote", i.id);
         client.delete_history(i).await?;
     }
+    debug!("finished processing deleted items");
 
     Ok(())
 }

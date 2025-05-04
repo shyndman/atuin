@@ -4,6 +4,7 @@ use config::{Config, Environment, File as ConfigFile, FileFormat};
 use eyre::{Result, eyre};
 use fs_err::{File, create_dir_all};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
+use tracing::debug;
 
 static EXAMPLE_CONFIG: &str = include_str!("../server.toml");
 
@@ -80,18 +81,23 @@ pub struct Settings<DbSettings> {
 
 impl<DbSettings: DeserializeOwned> Settings<DbSettings> {
     pub fn new() -> Result<Self> {
+        debug!("Loading server settings");
         let mut config_file = if let Ok(p) = std::env::var("ATUIN_CONFIG_DIR") {
+            debug!("Using ATUIN_CONFIG_DIR: {}", p);
             PathBuf::from(p)
         } else {
             let mut config_file = PathBuf::new();
             let config_dir = atuin_common::utils::config_dir();
+            debug!("Using default config directory: {}", config_dir.display());
             config_file.push(config_dir);
             config_file
         };
 
         config_file.push("server.toml");
+        debug!("Using config file path: {}", config_file.display());
 
         // create the config file if it does not exist
+        debug!("Setting default configuration values");
         let mut config_builder = Config::builder()
             .set_default("host", "127.0.0.1")?
             .set_default("port", 8888)?
@@ -107,31 +113,41 @@ impl<DbSettings: DeserializeOwned> Settings<DbSettings> {
             .set_default("mail.enable", false)?
             .set_default("tls.enable", false)?
             .set_default("tls.cert_path", "")?
-            .set_default("tls.pkey_path", "")?
-            .add_source(
-                Environment::with_prefix("atuin")
-                    .prefix_separator("_")
-                    .separator("__"),
-            );
+            .set_default("tls.pkey_path", "")?;
+
+        debug!("Adding environment variables as configuration source (prefix 'atuin')");
+        config_builder = config_builder.add_source(
+            Environment::with_prefix("atuin")
+                .prefix_separator("_")
+                .separator("__"),
+        );
+        debug!("Environment variables added as source");
 
         config_builder = if config_file.exists() {
+            debug!("Loading configuration from file: {}", config_file.display());
             config_builder.add_source(ConfigFile::new(
                 config_file.to_str().unwrap(),
                 FileFormat::Toml,
             ))
         } else {
+            debug!("Config file not found, creating default: {}", config_file.display());
             create_dir_all(config_file.parent().unwrap())?;
             let mut file = File::create(config_file)?;
             file.write_all(EXAMPLE_CONFIG.as_bytes())?;
-
+            debug!("Default config file created");
             config_builder
         };
 
+        debug!("Building final configuration");
         let config = config_builder.build()?;
+        debug!("Configuration built successfully");
 
-        config
+        debug!("Deserializing configuration into Settings struct");
+        let settings = config
             .try_deserialize()
-            .map_err(|e| eyre!("failed to deserialize: {}", e))
+            .map_err(|e| eyre!("failed to deserialize: {}", e))?;
+        debug!("Settings loaded successfully");
+        Ok(settings)
     }
 }
 
