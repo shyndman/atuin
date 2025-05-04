@@ -58,11 +58,14 @@ fn fix_error(error: sqlx::Error) -> DbError {
 impl Database for Postgres {
     type Settings = PostgresSettings;
     async fn new(settings: &PostgresSettings) -> DbResult<Self> {
+        tracing::debug!("Connecting to PostgreSQL database");
         let pool = PgPoolOptions::new()
             .max_connections(100)
             .connect(settings.db_uri.as_str())
             .await
             .map_err(fix_error)?;
+
+        tracing::debug!("PostgreSQL connection successful");
 
         // Call server_version_num to get the DB server's major version number
         // The call returns None for servers older than 8.x.
@@ -83,16 +86,19 @@ impl Database for Postgres {
             ))));
         }
 
+        tracing::debug!("Running database migrations");
         sqlx::migrate!("./migrations")
             .run(&pool)
             .await
             .map_err(|error| DbError::Other(error.into()))?;
+        tracing::debug!("Database migrations complete");
 
         Ok(Self { pool })
     }
 
     #[instrument(skip_all)]
     async fn get_session(&self, token: &str) -> DbResult<Session> {
+        tracing::debug!("Getting session with token: {}", token);
         sqlx::query_as("select id, user_id, token from sessions where token = $1")
             .bind(token)
             .fetch_one(&self.pool)
@@ -103,6 +109,7 @@ impl Database for Postgres {
 
     #[instrument(skip_all)]
     async fn get_user(&self, username: &str) -> DbResult<User> {
+        tracing::debug!("Getting user with username: {}", username);
         sqlx::query_as(
             "select id, username, email, password, verified_at from users where username = $1",
         )
@@ -196,9 +203,9 @@ impl Database for Postgres {
     #[instrument(skip_all)]
     async fn get_session_user(&self, token: &str) -> DbResult<User> {
         sqlx::query_as(
-            "select users.id, users.username, users.email, users.password, users.verified_at from users 
-            inner join sessions 
-            on users.id = sessions.user_id 
+            "select users.id, users.username, users.email, users.password, users.verified_at from users
+            inner join sessions
+            on users.id = sessions.user_id
             and sessions.token = $1",
         )
         .bind(token)
@@ -269,6 +276,7 @@ impl Database for Postgres {
     }
 
     async fn delete_history(&self, user: &User, id: String) -> DbResult<()> {
+        tracing::debug!("Deleting history entry with id: {} for user: {}", id, user.username);
         sqlx::query(
             "update history
             set deleted_at = $3
@@ -293,7 +301,7 @@ impl Database for Postgres {
         // edge case.
 
         let res = sqlx::query(
-            "select client_id from history 
+            "select client_id from history
             where user_id = $1
             and deleted_at is not null",
         )
@@ -342,7 +350,7 @@ impl Database for Postgres {
         page_size: i64,
     ) -> DbResult<Vec<History>> {
         let res = sqlx::query_as(
-            "select id, client_id, user_id, hostname, timestamp, data, created_at from history 
+            "select id, client_id, user_id, hostname, timestamp, data, created_at from history
             where user_id = $1
             and hostname != $2
             and created_at >= $3
@@ -366,6 +374,7 @@ impl Database for Postgres {
 
     #[instrument(skip_all)]
     async fn add_history(&self, history: &[NewHistory]) -> DbResult<()> {
+        tracing::debug!("Adding {} history entries", history.len());
         let mut tx = self.pool.begin().await.map_err(fix_error)?;
 
         for i in history {
@@ -375,7 +384,7 @@ impl Database for Postgres {
 
             sqlx::query(
                 "insert into history
-                    (client_id, user_id, hostname, timestamp, data) 
+                    (client_id, user_id, hostname, timestamp, data)
                 values ($1, $2, $3, $4, $5)
                 on conflict do nothing
                 ",
@@ -505,7 +514,7 @@ impl Database for Postgres {
     #[instrument(skip_all)]
     async fn oldest_history(&self, user: &User) -> DbResult<History> {
         sqlx::query_as(
-            "select id, client_id, user_id, hostname, timestamp, data, created_at from history 
+            "select id, client_id, user_id, hostname, timestamp, data, created_at from history
             where user_id = $1
             order by timestamp asc
             limit 1",
@@ -519,6 +528,7 @@ impl Database for Postgres {
 
     #[instrument(skip_all)]
     async fn add_records(&self, user: &User, records: &[Record<EncryptedData>]) -> DbResult<()> {
+        tracing::debug!("Adding {} records for user: {}", records.len(), user.username);
         let mut tx = self.pool.begin().await.map_err(fix_error)?;
 
         // We won't have uploaded this data if it wasn't the max. Therefore, we can deduce the max
@@ -535,7 +545,7 @@ impl Database for Postgres {
 
             sqlx::query(
                 "insert into store
-                    (id, client_id, host, idx, timestamp, version, tag, data, cek, user_id) 
+                    (id, client_id, host, idx, timestamp, version, tag, data, cek, user_id)
                 values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
                 on conflict do nothing
                 ",
@@ -569,7 +579,7 @@ impl Database for Postgres {
         for ((host, tag), idx) in heads {
             sqlx::query(
                 "insert into store_idx_cache
-                    (user_id, host, tag, idx) 
+                    (user_id, host, tag, idx)
                 values ($1, $2, $3, $4)
                 on conflict(user_id, host, tag) do update set idx = greatest(store_idx_cache.idx, $4)
                 ",

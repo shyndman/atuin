@@ -17,7 +17,7 @@ use sqlx::{
     sqlite::{
         SqliteConnectOptions, SqliteJournalMode, SqlitePool, SqlitePoolOptions, SqliteRow,
         SqliteSynchronous,
-    },
+    },sql
 };
 use time::OffsetDateTime;
 

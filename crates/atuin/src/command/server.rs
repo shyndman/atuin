@@ -34,10 +34,12 @@ impl Cmd {
             .with(EnvFilter::from_default_env())
             .init();
 
+        tracing::debug!("Running server command");
         tracing::trace!(command = ?self, "server command");
 
         match self {
             Self::Start { host, port } => {
+                tracing::debug!("Starting server with host: {:?} and port: {:?}", host, port);
                 let settings = Settings::new().wrap_err("could not load server settings")?;
                 let host = host.as_ref().unwrap_or(&settings.host).clone();
                 let port = port.unwrap_or(settings.port);
@@ -50,7 +52,9 @@ impl Cmd {
                     ));
                 }
 
-                launch::<Postgres>(settings, addr).await
+                let result = launch::<Postgres>(settings, addr).await;
+                tracing::debug!("Server launch result: {:?}", result);
+                result
             }
             Self::DefaultConfig => {
                 println!("{}", example_config());
